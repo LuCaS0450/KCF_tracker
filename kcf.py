@@ -183,7 +183,8 @@ class KCFTracker:
         # We only average the Euclidean distance over the spatial dimensions.
         # Because features are L2 normalized per cell, xx and yy are exactly 1.0 per cell.
         # Bounding dist properly between 0.0 and 2.0 to give a sharp spatial Gaussian peak.
-        dist = np.maximum(0.0, (xx + yy - 2.0 * xy) / (H * W))
+        dist = np.maximum(0.0, (xx + yy - 2.0 * xy) / (H * W * C))
+
 
         k = np.exp(-dist / (self.sigma ** 2))
         return np.fft.fft2(k)

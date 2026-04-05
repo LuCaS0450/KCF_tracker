@@ -45,8 +45,18 @@ def run_otb():
             continue
 
         img_files, gt = get_sequence_info(seq_dir)
-        if img_files is None or len(img_files) == 0:
+        if img_files is None or len(img_files) == 0 or len(gt) == 0:
             continue
+
+        # =========== OTB 数据集帧对齐逻辑 ===========
+        # 处理 GT 不是从第 1 帧开始的情况（如 David 序列）
+        if len(img_files) > len(gt):
+            # 截取图片列表的尾部，使其与 GT 的长度和对应关系完美匹配
+            img_files = img_files[-len(gt):]
+        elif len(img_files) < len(gt):
+            # 防止跟踪器中途崩溃或提前退出，截断 GT 以匹配预测长度
+            gt = gt[:len(img_files)]
+        # ============================================
 
         tracker = KCFTracker()
 

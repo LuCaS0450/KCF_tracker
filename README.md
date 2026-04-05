@@ -410,14 +410,21 @@ OTB-100 是公开的目标跟踪基准数据集，可从以下地址下载：
 
 ### Q5: 为什么 David 序列的帧数不匹配？
 
-某些 OTB 序列（如 David）的起始帧不是第 1 帧。本项目在 `evaluate.py` 中已自动处理：
+某些 OTB 序列（如 David）的起始帧不是第 1 帧。本项目在 `run_tracker.py` 和 `evaluate.py` 中均已自动处理：
 
+**跟踪阶段（run_tracker.py）：**
+```python
+if len(img_files) > len(gt):
+    img_files = img_files[-len(gt):]  # 截取图片尾部与 GT 对齐
+```
+这确保了跟踪器从正确的帧开始初始化。
+
+**评估阶段（evaluate.py）：**
 ```python
 if len(res_boxes) > len(gt_boxes):
-    res_boxes = res_boxes[-len(gt_boxes):]  # 截取尾部对齐
+    res_boxes = res_boxes[-len(gt_boxes):]  # 截取预测框尾部对齐
 ```
-
-这确保了预测结果与 Ground Truth 正确对齐。
+这确保了预测结果与 Ground Truth 正确对齐进行指标计算。
 
 ---
 
