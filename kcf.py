@@ -19,8 +19,7 @@ class KCFTracker:
 
         # 2. 扩充为 7 个尺度因子：[0.942, 0.961, 0.980, 1.000, 1.020, 1.040, 1.061]
         self.scale_factors = [self.scale_step ** i for i in range(-3, 4)]
-
-        self.scale_interp_factor = 0.02
+        
         self.current_scale_factor = 1.0
 
         # 3. 匹配 7 个惩罚权重：距离 1.0 越远的尺度，惩罚力度越大
@@ -137,11 +136,8 @@ class KCFTracker:
 
         # Instantly update tracking scale and bounding box size
         if psr > self.psr_threshold:
-            # Bug fix: Previously we interpolated using scale_interp_factor=0.02.
-            # Since best_scale_factor only bounds by 1.05 max, interpolating it by 0.02
-            # caused the box to only grow by 0.1% per frame, which appeared completely invisible.
-            # Standard SAMF directly accepts the tested scale multiplier.
-            scale_weight = 0.15  # allowing it to update fast enough
+            # 使用指数移动平均平滑尺度变化，权重 0.15 平衡响应速度和稳定性
+            scale_weight = 0.15
             self.current_scale_factor = (1.0 - scale_weight) * self.current_scale_factor + scale_weight * best_scale_factor
 
             self.target_sz = (
