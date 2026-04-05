@@ -101,27 +101,24 @@ class KCFTracker:
             r, c = np.unravel_index(np.argmax(responses), responses.shape)
             max_response = responses[r, c]
 
-            # =========== 新增：子像素级峰值估计 (Sub-pixel Peak Estimation) ===========
+            # =========== 修复：子像素级峰值估计 ===========
             H, W = responses.shape
-            # 因为频域相关性具有循环周期性，所以需要用到取模运算 (%) 获取邻居点
             r_prev = (r - 1) % H
             r_next = (r + 1) % H
             c_prev = (c - 1) % W
             c_next = (c + 1) % W
-
-            # 利用一维二次多项式（抛物线）插值公式计算亚像素偏移量
-            # 公式: delta = (y[-1] - y[1]) / (2 * (y[-1] - 2*y[0] + y[1]))
-            # 加上 1e-16 防止分母为零
-            dr = (responses[r_prev, c] - responses[r_next, c]) / \
-                 (2 * (responses[r_prev, c] - 2 * responses[r, c] + responses[r_next, c]) + 1e-16)
             
-            dc = (responses[r, c_prev] - responses[r, c_next]) / \
-                 (2 * (responses[r, c_prev] - 2 * responses[r, c] + responses[r_next, c]) + 1e-16)
+            # 计算垂直和水平方向的二阶导数 (抛物线分母)
+            dr_den = responses[r_prev, c] + responses[r_next, c] - 2 * responses[r, c]
+            dc_den = responses[r, c_prev] + responses[r, c_next] - 2 * responses[r, c]
             
-            # 获得亚像素级别的精确坐标（带有小数的 float 类型）
+            # 计算亚像素偏移量 (防零除)
+            dr = (responses[r_prev, c] - responses[r_next, c]) / (2 * dr_den) if dr_den != 0 else 0.0
+            dc = (responses[r, c_prev] - responses[r, c_next]) / (2 * dc_den) if dc_den != 0 else 0.0
+            
             r_sub = r + dr
             c_sub = c + dc
-            # ====================================================================
+            # ============================================
 
             # Calculate PSR properly
             mean_response = np.mean(responses)
@@ -156,15 +153,14 @@ class KCFTracker:
         self.pos[1] += (c * self.cell_size) * best_scale_factor
 
         # Instantly update tracking scale and bounding box size
-        if psr > self.psr_threshold:
-            # 使用指数移动平均平滑尺度变化，权重 0.15 平衡响应速度和稳定性
-            scale_weight = 0.15
-            self.current_scale_factor = (1.0 - scale_weight) * self.current_scale_factor + scale_weight * best_scale_factor
+        # 使用指数移动平均平滑尺度变化，权重 0.15 平衡响应速度和稳定性
+        scale_weight = 0.15
+        self.current_scale_factor = (1.0 - scale_weight) * self.current_scale_factor + scale_weight * best_scale_factor
 
-            self.target_sz = (
-                self.base_target_sz[0] * self.current_scale_factor,
-                self.base_target_sz[1] * self.current_scale_factor
-            )
+        self.target_sz = (
+            self.base_target_sz[0] * self.current_scale_factor,
+            self.base_target_sz[1] * self.current_scale_factor
+        )
 
         # Re-train using a patch perfectly centered at NEW position and exact smoothed scale
         train_window_sz = (
@@ -177,9 +173,8 @@ class KCFTracker:
         xf = np.fft.fft2(x, axes=(0, 1))
         alphaf = self.training(xf, self.yf)
 
-        if psr > self.psr_threshold:
-            self.model_alphaf = (1.0 - self.interp_factor) * self.model_alphaf + self.interp_factor * alphaf
-            self.model_xf = (1.0 - self.interp_factor) * self.model_xf + self.interp_factor * xf
+        self.model_alphaf = (1.0 - self.interp_factor) * self.model_alphaf + self.interp_factor * alphaf
+        self.model_xf = (1.0 - self.interp_factor) * self.model_xf + self.interp_factor * xf
 
         self._roi = [
             float(self.pos[1] - self.target_sz[0] / 2.0),
