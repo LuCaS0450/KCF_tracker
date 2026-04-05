@@ -99,8 +99,29 @@ class KCFTracker:
             responses = np.real(np.fft.ifft2(self.model_alphaf * kzf))
 
             r, c = np.unravel_index(np.argmax(responses), responses.shape)
-
             max_response = responses[r, c]
+
+            # =========== 新增：子像素级峰值估计 (Sub-pixel Peak Estimation) ===========
+            H, W = responses.shape
+            # 因为频域相关性具有循环周期性，所以需要用到取模运算 (%) 获取邻居点
+            r_prev = (r - 1) % H
+            r_next = (r + 1) % H
+            c_prev = (c - 1) % W
+            c_next = (c + 1) % W
+
+            # 利用一维二次多项式（抛物线）插值公式计算亚像素偏移量
+            # 公式: delta = (y[-1] - y[1]) / (2 * (y[-1] - 2*y[0] + y[1]))
+            # 加上 1e-16 防止分母为零
+            dr = (responses[r_prev, c] - responses[r_next, c]) / \
+                 (2 * (responses[r_prev, c] - 2 * responses[r, c] + responses[r_next, c]) + 1e-16)
+            
+            dc = (responses[r, c_prev] - responses[r, c_next]) / \
+                 (2 * (responses[r, c_prev] - 2 * responses[r, c] + responses[r_next, c]) + 1e-16)
+            
+            # 获得亚像素级别的精确坐标（带有小数的 float 类型）
+            r_sub = r + dr
+            c_sub = c + dc
+            # ====================================================================
 
             # Calculate PSR properly
             mean_response = np.mean(responses)
@@ -108,15 +129,15 @@ class KCFTracker:
             psr = (max_response - mean_response) / (std_response + 1e-6)
 
             # Use penalized max_response for scale selection.
-            # In standard SAMF, max_response is preferred over PSR for scale selection
-            # because PSR is too volatile across slight positional shifts.
             score = max_response * self.scale_penalties[i]
 
             if score > best_score:
                 best_score = score
                 best_psr = psr
                 best_scale_factor = test_scale_factor
-                best_r, best_c = r, c
+                # =========== 修改：这里要保存亚像素坐标 ===========
+                best_r, best_c = r_sub, c_sub  
+                # ================================================
                 best_responses = responses
 
         r, c = best_r, best_c
