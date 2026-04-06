@@ -154,7 +154,7 @@ class KCFTracker:
 
         # Instantly update tracking scale and bounding box size
         # 使用指数移动平均平滑尺度变化，权重 0.15 平衡响应速度和稳定性
-        scale_weight = 0.15
+        scale_weight = 0.1
         self.current_scale_factor = (1.0 - scale_weight) * self.current_scale_factor + scale_weight * best_scale_factor
 
         self.target_sz = (
