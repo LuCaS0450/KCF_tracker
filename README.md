@@ -1,49 +1,124 @@
 # KCF Tracker
 
-一个基于 KCF (Kernelized Correlation Filter) 的目标跟踪项目，包含单视频演示、OTB100 批量运行与结果评估脚本。
+一个基于 KCF (Kernelized Correlation Filter) 的目标跟踪项目，支持以下流程：
 
-## 快速开始
+- 单视频可视化演示
+- OTB100 批量跟踪与评估
+- VOT2018 跟踪与评估
 
-### 1) 安装依赖
+## 1. 环境与依赖
+
+建议使用 Python 3.10+。
 
 ```bash
 pip install -r requirements.txt
+pip install vot-toolkit
 ```
 
-### 2) 运行演示
+## 2. 当前项目结构
+
+```text
+KCF_tracker/
+	core/                     # 全局核心代码
+		kcf.py
+		fhog.py
+	demos/                    # 演示脚本
+		demo.py
+	otb/                      # OTB100 运行与评估脚本
+		run_tracker.py
+		evaluate.py
+	vot2018/                  # VOT2018 运行与评估脚本
+		run_vot2018.py
+		evaluate_vot2018.py
+		vot_wrapper.py
+		vot_local.py
+	vot2018_workspace/        # VOT toolkit 工作区
+		trackers.ini
+		sequences/
+		results/
+		logs/
+	otb100/                   # OTB100 数据集
+	results/
+		KCF/                    # OTB 跟踪结果
+```
+
+## 3. 运行方法
+
+以下命令默认在项目根目录执行。
+
+### 3.1 单视频演示
 
 ```bash
-python demo.py
+python demos/demo.py
 ```
 
-### 3) 批量运行（OTB100）
+### 3.2 OTB100 批量跟踪
 
 ```bash
-python run_tracker.py
+python otb/run_tracker.py
 ```
 
-### 4) 评估结果
+### 3.3 OTB100 评估
 
 ```bash
-python evaluate.py
+python otb/evaluate.py
 ```
 
-## 数据与目录说明
+### 3.4 VOT2018 快速验证（单序列）
 
-- OTB100 数据默认放在项目根目录下的 `otb100/`。
-- 每个序列通常包含：`img/` 与 `groundtruth_rect.txt`。
-- 批量运行结果默认写入：`results/KCF/`。
-- 评估图示例：`precision_plot.png`、`success_plot.png`。
+```bash
+python vot2018/run_vot2018.py --quick
+```
 
-## 项目文件（核心）
+### 3.5 VOT2018 完整运行
 
-- `kcf.py`：KCF 跟踪器实现。
-- `fhog.py`：特征相关实现。
-- `demo.py`：单视频/可视化演示入口。
-- `run_tracker.py`：数据集批量跟踪入口。
-- `evaluate.py`：精度与成功率评估。
+```bash
+python vot2018/run_vot2018.py
+```
 
-## 备注
+### 3.6 VOT2018 评估
 
-- 若路径不一致，请在脚本中将数据根目录改为你的本地路径。
-- 先运行 `run_tracker.py`，再运行 `evaluate.py`。
+```bash
+python vot2018/evaluate_vot2018.py
+```
+
+如果当前目录在 `vot2018/`，也可直接执行：
+
+```bash
+python run_vot2018.py
+python evaluate_vot2018.py
+```
+
+## 4. 结果输出位置
+
+- OTB 跟踪结果：`results/KCF/*.txt`
+- OTB 评估图：`success_plot.png`、`precision_plot.png`
+- VOT 跟踪结果：`vot2018_workspace/results/KCF_Tracker/baseline/**/.bin`
+- VOT 评估结果：`vot2018_workspace/evaluation_results.txt`
+- VOT 准确率图：`vot2018_accuracy.png`
+
+## 5. VOT 配置注意事项
+
+`vot2018_workspace/trackers.ini` 中 `command` 当前使用绝对路径指向 `vot2018/vot_wrapper.py`。
+
+如果你移动了项目目录，需要同步更新该路径，否则可能出现：
+
+```text
+Unable to connect to tracker
+```
+
+排查日志目录：`vot2018_workspace/logs/`
+
+## 6. 常见问题
+
+### 6.1 提示找不到 vot 命令
+
+安装 vot-toolkit 并确认当前环境生效：
+
+```bash
+pip install vot-toolkit
+```
+
+### 6.2 VOT 运行中断但返回码异常
+
+`vot2018/run_vot2018.py` 已增加结果文件二次校验。若未生成 `.bin`，脚本会直接判定失败并提示查看日志。

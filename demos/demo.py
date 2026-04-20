@@ -1,7 +1,12 @@
 import cv2
 import sys
+from pathlib import Path
 
-from kcf import KCFTracker
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.kcf import KCFTracker
 
 def main():
     # To use our custom HOG KCF python tracker
@@ -10,10 +15,11 @@ def main():
 
     # You could read from a video file: cv2.VideoCapture("video.mp4")
     # Here we use the provided video file for demonstration
-    video = cv2.VideoCapture("CarScale.avi")
+    video_path = PROJECT_ROOT / "CarScale.avi"
+    video = cv2.VideoCapture(str(video_path))
 
     if not video.isOpened():
-        print("Could not open video")
+        print(f"Could not open video: {video_path}")
         sys.exit()
 
     # Read first frame

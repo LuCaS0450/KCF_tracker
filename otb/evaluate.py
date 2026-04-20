@@ -1,6 +1,9 @@
 import os
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def compute_iou(box1, box2):
     """
@@ -58,11 +61,15 @@ def load_boxes(path):
     return np.array(boxes)
 
 def evaluate_otb():
-    otb_dir = 'otb100'
-    res_dir = os.path.join('results', 'KCF')
+    otb_dir = PROJECT_ROOT / 'otb100'
+    res_dir = PROJECT_ROOT / 'results' / 'KCF'
 
-    if not os.path.exists(res_dir):
-        print("Predictions not found. Please run run_tracker.py first.")
+    if not res_dir.exists():
+        print("Predictions not found. Please run otb/run_tracker.py first.")
+        return
+
+    if not otb_dir.exists():
+        print(f"OTB dataset directory not found: {otb_dir}")
         return
 
     sequences = sorted(os.listdir(otb_dir))
@@ -76,11 +83,11 @@ def evaluate_otb():
 
     print("Evaluating sequences...")
     for seq in sequences:
-        seq_dir = os.path.join(otb_dir, seq)
-        gt_path = os.path.join(seq_dir, 'groundtruth_rect.txt')
-        res_path = os.path.join(res_dir, f"{seq}.txt")
+        seq_dir = otb_dir / seq
+        gt_path = seq_dir / 'groundtruth_rect.txt'
+        res_path = res_dir / f"{seq}.txt"
 
-        if not os.path.exists(gt_path) or not os.path.exists(res_path):
+        if not gt_path.exists() or not res_path.exists():
             continue
 
         gt_boxes = load_boxes(gt_path)
@@ -138,7 +145,7 @@ def evaluate_otb():
     plt.legend(loc='lower left')
     plt.xlim(0, 1)
     plt.ylim(0, 1)
-    plt.savefig('success_plot.png')
+    plt.savefig(PROJECT_ROOT / 'success_plot.png')
     plt.close()
 
     # 绘制精确度曲线 (Precision Plot)
@@ -151,7 +158,7 @@ def evaluate_otb():
     plt.legend(loc='lower right')
     plt.xlim(0, 50)
     plt.ylim(0, 1)
-    plt.savefig('precision_plot.png')
+    plt.savefig(PROJECT_ROOT / 'precision_plot.png')
     plt.close()
 
     print(f"Evaluation complete.")

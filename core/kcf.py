@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-import fhog
+from . import fhog
 
 
 class KCFTracker:
@@ -101,8 +101,23 @@ class KCFTracker:
             r, c = np.unravel_index(np.argmax(responses), responses.shape)
             max_response = responses[r, c]
 
+            # Calculate PSR properly
+            mean_response = np.mean(responses)
+            std_response = np.std(responses)
+            psr = (max_response - mean_response) / (std_response + 1e-6)
+
             # =========== 修复：子像素级峰值估计 ===========
             H, W = responses.shape
+            
+            # 首先处理整数坐标的环绕
+            r_int = r
+            c_int = c
+            
+            if r_int > H // 2:
+                r_int -= H
+            if c_int > W // 2:
+                c_int -= W
+                
             r_prev = (r - 1) % H
             r_next = (r + 1) % H
             c_prev = (c - 1) % W
@@ -116,14 +131,9 @@ class KCFTracker:
             dr = (responses[r_prev, c] - responses[r_next, c]) / (2 * dr_den) if dr_den != 0 else 0.0
             dc = (responses[r, c_prev] - responses[r, c_next]) / (2 * dc_den) if dc_den != 0 else 0.0
             
-            r_sub = r + dr
-            c_sub = c + dc
+            r_sub = r_int + dr
+            c_sub = c_int + dc
             # ============================================
-
-            # Calculate PSR properly
-            mean_response = np.mean(responses)
-            std_response = np.std(responses)
-            psr = (max_response - mean_response) / (std_response + 1e-6)
 
             # Use penalized max_response for scale selection.
             score = max_response * self.scale_penalties[i]
@@ -132,21 +142,11 @@ class KCFTracker:
                 best_score = score
                 best_psr = psr
                 best_scale_factor = test_scale_factor
-                # =========== 修改：这里要保存亚像素坐标 ===========
                 best_r, best_c = r_sub, c_sub  
-                # ================================================
                 best_responses = responses
 
         r, c = best_r, best_c
         psr = best_psr
-
-        if best_responses is not None:
-            if r > best_responses.shape[0] // 2:
-                r -= best_responses.shape[0]
-            if c > best_responses.shape[1] // 2:
-                c -= best_responses.shape[1]
-        else:
-            r = c = 0
 
         # Cell shift -> pixel shift, using the optimal scale
         self.pos[0] += (r * self.cell_size) * best_scale_factor
@@ -154,7 +154,7 @@ class KCFTracker:
 
         # Instantly update tracking scale and bounding box size
         # 使用指数移动平均平滑尺度变化，权重 0.15 平衡响应速度和稳定性
-        scale_weight = 0.1
+        scale_weight = 0.15
         self.current_scale_factor = (1.0 - scale_weight) * self.current_scale_factor + scale_weight * best_scale_factor
 
         self.target_sz = (

@@ -1,17 +1,25 @@
 import os
 import cv2
 import glob
+import sys
+from pathlib import Path
 from tqdm import tqdm
-from kcf import KCFTracker
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.kcf import KCFTracker
 
 def get_sequence_info(seq_dir):
     """
     Parses the groundtruth and image paths for a sequence.
     """
-    img_dir = os.path.join(seq_dir, 'img')
-    gt_path = os.path.join(seq_dir, 'groundtruth_rect.txt')
+    seq_dir = Path(seq_dir)
+    img_dir = seq_dir / 'img'
+    gt_path = seq_dir / 'groundtruth_rect.txt'
 
-    if not os.path.exists(gt_path) or not os.path.exists(img_dir):
+    if not gt_path.exists() or not img_dir.exists():
         return None, None
 
     with open(gt_path, 'r') as f:
@@ -28,20 +36,23 @@ def get_sequence_info(seq_dir):
             vals = line.split()
         gt.append([float(v) for v in vals[:4]])
 
-    img_files = sorted(glob.glob(os.path.join(img_dir, '*.jpg')) + glob.glob(os.path.join(img_dir, '*.png')))
+    img_files = sorted(glob.glob(str(img_dir / '*.jpg')) + glob.glob(str(img_dir / '*.png')))
 
     return img_files, gt
 
 def run_otb():
-    otb_dir = 'otb100'
-    res_dir = os.path.join('results', 'KCF')
-    os.makedirs(res_dir, exist_ok=True)
+    otb_dir = PROJECT_ROOT / 'otb100'
+    res_dir = PROJECT_ROOT / 'results' / 'KCF'
+    res_dir.mkdir(parents=True, exist_ok=True)
+
+    if not otb_dir.exists():
+        raise FileNotFoundError(f"OTB dataset directory not found: {otb_dir}")
 
     sequences = sorted(os.listdir(otb_dir))
 
     for seq in tqdm(sequences, desc="Evaluating OTB100"):
-        seq_dir = os.path.join(otb_dir, seq)
-        if not os.path.isdir(seq_dir):
+        seq_dir = otb_dir / seq
+        if not seq_dir.is_dir():
             continue
 
         img_files, gt = get_sequence_info(seq_dir)
@@ -76,8 +87,8 @@ def run_otb():
             res.append(bbox)
 
         # Save tracking results
-        res_path = os.path.join(res_dir, f"{seq}.txt")
-        with open(res_path, 'w') as f:
+        res_path = res_dir / f"{seq}.txt"
+        with open(res_path, 'w', encoding='utf-8') as f:
             for bbox in res:
                 f.write(f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}\n")
 

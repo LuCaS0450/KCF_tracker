@@ -1,0 +1,43 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.conda/
+.venv/
+venv/
+env/
+
+# Python tooling cache
+.pytest_cache/
+.mypy_cache/
+
+# IDE/editor settings
+.idea/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
+**/__MACOSX/
+
+# Local datasets and media
+otb100/
+vot2018_workspace/sequences/
+CarScale.avi
+
+# OTB and VOT generated outputs
+results/
+precision_plot.png
+success_plot.png
+vot2018_accuracy.png
+vot2018_workspace/analysis/
+vot2018_workspace/cache/
+vot2018_workspace/logs/
+vot2018_workspace/reports/
+vot2018_workspace/results/
+vot2018_workspace/evaluation_results.txt
+
+# Machine-local tracker command path
+vot2018_workspace/trackers.ini
