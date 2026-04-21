@@ -50,6 +50,12 @@ def compute_cle(box1, box2):
     cle = np.sqrt((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2)
     return cle
 
+def compute_success_curve(ious, thresholds_iou):
+    """
+    Compute OTB success curve using the official overlap-threshold rule (>= threshold).
+    """
+    return np.array([np.mean(ious >= th) for th in thresholds_iou], dtype=np.float64)
+
 def load_boxes(path):
     boxes = []
     with open(path, 'r') as f:
@@ -120,7 +126,7 @@ def evaluate_otb():
         # 修改点 1 & 2: OTB 官方标准 (Macro-average) 且 <= 阈值
         # ==========================================
         # 分别计算当前这【一个视频】的曲线
-        seq_success_curve = [np.mean(ious > th) for th in thresholds_iou]
+        seq_success_curve = compute_success_curve(ious, thresholds_iou)
         seq_precision_curve = [np.mean(cles <= th) for th in thresholds_cle]  # 改为 <=
 
         # 将该视频的曲线存入总池子中
