@@ -42,3 +42,5 @@ vot2018_workspace/evaluation_results.txt
 
 # Machine-local tracker command path
 vot2018_workspace/trackers.ini
+vot2018_eao_per_sequence.png
+vot2018_robustness_per_sequence.png

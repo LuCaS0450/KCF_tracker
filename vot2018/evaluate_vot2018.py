@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EAO_WINDOW_LOW = 1
+EAO_WINDOW_HIGH = 100
 
 def load_groundtruth(gt_file):
     """加载真实标注文件"""
@@ -71,6 +73,56 @@ def compute_overlap(rect1, rect2):
         return 0.0
     
     return intersection / union
+
+def build_overlap_segments(frame_overlaps):
+    """将按帧重叠率序列切分为连续有效片段（用 NaN 作为分隔）。"""
+    segments = []
+    current = []
+
+    for value in frame_overlaps:
+        if np.isnan(value):
+            if current:
+                segments.append(np.array(current, dtype=np.float32))
+                current = []
+        else:
+            current.append(float(value))
+
+    if current:
+        segments.append(np.array(current, dtype=np.float32))
+
+    return segments
+
+def compute_expected_overlap_curve(segments):
+    """根据片段计算 expected overlap 曲线。"""
+    if not segments:
+        return np.array([], dtype=np.float32)
+
+    max_len = max(len(seg) for seg in segments)
+    curve = np.full(max_len, np.nan, dtype=np.float32)
+
+    for t in range(1, max_len + 1):
+        prefix_means = [np.mean(seg[:t]) for seg in segments if len(seg) >= t]
+        if prefix_means:
+            curve[t - 1] = float(np.mean(prefix_means))
+
+    return curve
+
+def compute_sequence_eao(segments, low=EAO_WINDOW_LOW, high=EAO_WINDOW_HIGH):
+    """计算单序列 EAO（Expected Average Overlap）。"""
+    curve = compute_expected_overlap_curve(segments)
+    if len(curve) == 0:
+        return 0.0
+
+    start = max(1, int(low))
+    end = min(int(high), len(curve))
+
+    if end < start:
+        valid = curve[np.isfinite(curve)]
+        return float(np.mean(valid)) if len(valid) > 0 else 0.0
+
+    window = curve[start - 1:end]
+    window = window[np.isfinite(window)]
+    return float(np.mean(window)) if len(window) > 0 else 0.0
 
 def load_results_bin(res_file):
     """加载 VOT Toolkit 格式的 bin 文件"""
@@ -165,6 +217,7 @@ def evaluate_sequence(seq_name, results_dir, sequences_dir):
     res = res[:min_len]
     
     overlaps = []
+    frame_overlaps = []
     failures = 0
     tracked_frames = 0
 
@@ -177,7 +230,10 @@ def evaluate_sequence(seq_name, results_dir, sequences_dir):
             if frame_info.get('valid', False):
                 iou = compute_overlap(frame_info['bbox'], gt[i])
                 overlaps.append(iou)
+                frame_overlaps.append(iou)
                 tracked_frames += 1
+            else:
+                frame_overlaps.append(np.nan)
 
             if frame_info.get('failure', False):
                 failures += 1
@@ -186,6 +242,7 @@ def evaluate_sequence(seq_name, results_dir, sequences_dir):
         for i in range(min_len):
             iou = compute_overlap(res[i], gt[i])
             overlaps.append(iou)
+            frame_overlaps.append(iou)
         tracked_frames = len(overlaps)
         failures = int(np.sum(np.array(overlaps) == 0))
 
@@ -193,10 +250,15 @@ def evaluate_sequence(seq_name, results_dir, sequences_dir):
 
     # 计算准确率
     accuracy = np.mean(overlaps) if len(overlaps) > 0 else 0.0
+    robustness = failures / min_len if min_len > 0 else 0.0
+    overlap_segments = build_overlap_segments(np.array(frame_overlaps, dtype=np.float32))
+    eao = compute_sequence_eao(overlap_segments)
     
     return {
         'sequence': seq_name,
         'accuracy': accuracy,
+        'robustness': robustness,
+        'eao': eao,
         'failures': failures,
         'tracked_frames': tracked_frames,
         'length': min_len,
@@ -227,11 +289,13 @@ def evaluate_all(workspace_dir=None):
     print("=" * 70)
     print("VOT2018 评估结果")
     print("=" * 70)
-    print(f"{'序列名称':<20} {'准确率':<10} {'失效次数':<10} {'有效帧数':<10} {'总帧数':<10}")
+    print(f"{'序列名称':<20} {'A(Accuracy)':<12} {'R(Robust)':<12} {'EAO':<10} {'失效次数':<10} {'总帧数':<10}")
     print("-" * 70)
     
     all_results = []
     total_accuracy = 0.0
+    total_robustness = 0.0
+    total_eao = 0.0
     total_failures = 0
     total_tracked_frames = 0
     total_frames = 0
@@ -241,12 +305,17 @@ def evaluate_all(workspace_dir=None):
         if result is not None:
             all_results.append(result)
             total_accuracy += result['accuracy']
+            total_robustness += result['robustness']
+            total_eao += result['eao']
             total_failures += result['failures']
             total_tracked_frames += result.get('tracked_frames', result['length'])
             total_frames += result['length']
             
-            print(f"{seq_name:<20} {result['accuracy']:<10.4f} "
-                f"{result['failures']:<10} {result.get('tracked_frames', result['length']):<10} {result['length']:<10}")
+            print(
+                f"{seq_name:<20} {result['accuracy']:<12.4f} "
+                f"{result['robustness']:<12.4f} {result['eao']:<10.4f} "
+                f"{result['failures']:<10} {result['length']:<10}"
+            )
     
     print("-" * 70)
     
@@ -254,81 +323,103 @@ def evaluate_all(workspace_dir=None):
     num_sequences = len(all_results)
     if num_sequences > 0:
         avg_accuracy = total_accuracy / num_sequences
+        avg_robustness = total_robustness / num_sequences
+        avg_eao = total_eao / num_sequences
         failure_rate = total_failures / total_frames if total_frames > 0 else 0.0
         
         print(f"\n总体统计:")
-        print(f"  平均准确率 (Accuracy):  {avg_accuracy:.4f}")
+        print(f"  平均准确率 A (Accuracy):       {avg_accuracy:.4f}")
+        print(f"  平均鲁棒性 R (Failures/Frame): {avg_robustness:.4f}")
+        print(f"  平均 EAO:                      {avg_eao:.4f}")
         print(f"  总失效次数:              {total_failures}")
         print(f"  失效率 (Failure Rate):   {failure_rate:.4f}")
         print(f"  评估序列数:              {num_sequences}")
         print(f"  有效预测帧数:            {total_tracked_frames}")
         print(f"  总帧数:                  {total_frames}")
+        print(f"  EAO 时间窗:              [{EAO_WINDOW_LOW}, {EAO_WINDOW_HIGH}]")
         
-        # 绘制准确率分布图
-        plot_accuracy_distribution(all_results)
+        # 为 A/R/EAO 生成序列级可视化
+        plot_metrics_per_sequence(all_results)
         
         # 保存结果到文件
         save_results(all_results, workspace_dir)
     
     print("\n" + "=" * 70)
 
-def plot_accuracy_distribution(results):
-    """绘制准确率分布图"""
-    accuracies = [r['accuracy'] for r in results]
+def plot_metric_per_sequence(results, metric_key, title, ylabel, output_filename, color):
+    """绘制单个指标的序列级分面柱状图。"""
+    values = [float(r[metric_key]) for r in results]
     seq_names = [r['sequence'] for r in results]
 
-    # 左图：分面子图（每个子图20个序列，适配科研展示）
+    if not values:
+        return
+
     chunk_size = 20
-    num_panels = int(np.ceil(len(accuracies) / chunk_size))
+    num_panels = int(np.ceil(len(values) / chunk_size))
     fig_seq, axes = plt.subplots(num_panels, 1, figsize=(12, 3.4 * num_panels), sharey=True)
     if num_panels == 1:
         axes = [axes]
 
+    if metric_key in ('accuracy', 'eao'):
+        y_upper = 1.0
+    else:
+        y_upper = max(0.05, float(np.max(values)) * 1.15)
+
     for panel_idx, ax in enumerate(axes):
         start = panel_idx * chunk_size
-        end = min((panel_idx + 1) * chunk_size, len(accuracies))
+        end = min((panel_idx + 1) * chunk_size, len(values))
 
-        if start >= len(accuracies):
+        if start >= len(values):
             ax.axis('off')
             continue
 
         x = np.arange(start, end)
-        panel_acc = accuracies[start:end]
+        panel_values = values[start:end]
         panel_names = [name[:12] for name in seq_names[start:end]]
 
-        ax.bar(x, panel_acc, color='steelblue', alpha=0.7)
+        ax.bar(x, panel_values, color=color, alpha=0.75)
         ax.set_xticks(x)
         ax.set_xticklabels(panel_names, rotation=45, ha='right', fontsize=8)
-        ax.set_ylim(0, 1.0)
-        ax.set_ylabel('Avg IoU', fontsize=10)
+        ax.set_ylim(0, y_upper)
+        ax.set_ylabel(ylabel, fontsize=10)
         ax.set_title(f'Sequences {start + 1}-{end}', fontsize=11)
         ax.grid(axis='y', alpha=0.3)
 
     axes[-1].set_xlabel('Sequence', fontsize=11)
-    fig_seq.suptitle('Tracking Accuracy per Sequence (Faceted)', fontsize=14)
+    fig_seq.suptitle(title, fontsize=14)
     fig_seq.tight_layout(rect=[0, 0.02, 1, 0.96])
 
-    output_seq_plot = PROJECT_ROOT / 'vot2018_accuracy_per_sequence.png'
+    output_seq_plot = PROJECT_ROOT / output_filename
     fig_seq.savefig(output_seq_plot, dpi=300, bbox_inches='tight')
-    print(f"  序列准确率分面图已保存: {output_seq_plot}")
+    print(f"  指标图已保存: {output_seq_plot}")
     plt.close(fig_seq)
 
-    # 右图：准确率分布直方图
-    fig_hist, ax_hist = plt.subplots(figsize=(10, 6))
-    ax_hist.hist(accuracies, bins=15, color='coral', alpha=0.7, edgecolor='black')
-    ax_hist.set_xlabel('Accuracy (Average IoU)', fontsize=12)
-    ax_hist.set_ylabel('Number of Sequences', fontsize=12)
-    ax_hist.set_title('Accuracy Distribution', fontsize=14)
-    ax_hist.axvline(np.mean(accuracies), color='red', linestyle='--',
-                    label=f'Mean: {np.mean(accuracies):.3f}')
-    ax_hist.legend()
-    ax_hist.grid(axis='y', alpha=0.3)
-    fig_hist.tight_layout()
-
-    output_hist_plot = PROJECT_ROOT / 'vot2018_accuracy_distribution.png'
-    fig_hist.savefig(output_hist_plot, dpi=300, bbox_inches='tight')
-    print(f"  准确率分布直方图已保存: {output_hist_plot}")
-    plt.close(fig_hist)
+def plot_metrics_per_sequence(results):
+    """为 A/R/EAO 三个指标生成序列级图像。"""
+    plot_metric_per_sequence(
+        results=results,
+        metric_key='accuracy',
+        title='Tracking Accuracy per Sequence (A)',
+        ylabel='A (Avg IoU)',
+        output_filename='vot2018_accuracy_per_sequence.png',
+        color='steelblue'
+    )
+    plot_metric_per_sequence(
+        results=results,
+        metric_key='robustness',
+        title='Tracking Robustness per Sequence (R)',
+        ylabel='R (Failures / Frame)',
+        output_filename='vot2018_robustness_per_sequence.png',
+        color='darkorange'
+    )
+    plot_metric_per_sequence(
+        results=results,
+        metric_key='eao',
+        title='Expected Average Overlap per Sequence (EAO)',
+        ylabel='EAO',
+        output_filename='vot2018_eao_per_sequence.png',
+        color='seagreen'
+    )
 
 def save_results(results, workspace_dir):
     """保存评估结果到文件"""
@@ -338,28 +429,39 @@ def save_results(results, workspace_dir):
         f.write("VOT2018 Evaluation Results\n")
         f.write("=" * 70 + "\n\n")
         
-        f.write(f"{'Sequence':<20} {'Accuracy':<12} {'Failures':<10} {'Tracked':<10} {'Frames':<10}\n")
+        f.write(
+            f"{'Sequence':<20} {'Accuracy(A)':<12} {'Robustness(R)':<14} "
+            f"{'EAO':<10} {'Failures':<10} {'Tracked':<10} {'Frames':<10}\n"
+        )
         f.write("-" * 70 + "\n")
         
         for r in results:
-            f.write(f"{r['sequence']:<20} {r['accuracy']:<12.4f} "
-                   f"{r['failures']:<10} {r.get('tracked_frames', r['length']):<10} {r['length']:<10}\n")
+            f.write(
+                f"{r['sequence']:<20} {r['accuracy']:<12.4f} {r['robustness']:<14.4f} "
+                f"{r['eao']:<10.4f} {r['failures']:<10} "
+                f"{r.get('tracked_frames', r['length']):<10} {r['length']:<10}\n"
+            )
         
         f.write("-" * 70 + "\n")
         
         total_accuracy = sum(r['accuracy'] for r in results)
+        total_robustness = sum(r['robustness'] for r in results)
+        total_eao = sum(r['eao'] for r in results)
         total_failures = sum(r['failures'] for r in results)
         total_tracked = sum(r.get('tracked_frames', r['length']) for r in results)
         total_frames = sum(r['length'] for r in results)
         num_sequences = len(results)
         
         f.write(f"\nOverall Statistics:\n")
-        f.write(f"  Average Accuracy:  {total_accuracy / num_sequences:.4f}\n")
-        f.write(f"  Total Failures:    {total_failures}\n")
-        f.write(f"  Failure Rate:      {total_failures / total_frames:.4f}\n")
-        f.write(f"  Num Sequences:     {num_sequences}\n")
-        f.write(f"  Tracked Frames:    {total_tracked}\n")
-        f.write(f"  Total Frames:      {total_frames}\n")
+        f.write(f"  Average Accuracy (A):     {total_accuracy / num_sequences:.4f}\n")
+        f.write(f"  Average Robustness (R):   {total_robustness / num_sequences:.4f}\n")
+        f.write(f"  Average EAO:              {total_eao / num_sequences:.4f}\n")
+        f.write(f"  Total Failures:           {total_failures}\n")
+        f.write(f"  Failure Rate:             {total_failures / total_frames:.4f}\n")
+        f.write(f"  EAO Window:               [{EAO_WINDOW_LOW}, {EAO_WINDOW_HIGH}]\n")
+        f.write(f"  Num Sequences:            {num_sequences}\n")
+        f.write(f"  Tracked Frames:           {total_tracked}\n")
+        f.write(f"  Total Frames:             {total_frames}\n")
     
     print(f"  评估结果已保存: {output_file}")
 
