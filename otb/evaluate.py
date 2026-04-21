@@ -123,7 +123,7 @@ def evaluate_otb():
         cles = compute_cle(res_boxes, gt_boxes)
 
         # ==========================================
-        # 修改点 1 & 2: OTB 官方标准 (Macro-average) 且 <= 阈值
+        # 修改点 1 & 2: OTB 官方标准 (Macro-average) 且使用包含边界的 >= 阈值
         # ==========================================
         # 分别计算当前这【一个视频】的曲线
         seq_success_curve = compute_success_curve(ious, thresholds_iou)
