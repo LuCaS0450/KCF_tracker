@@ -4,6 +4,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PLOT_FIGSIZE = (10, 7)
+PLOT_DPI = 300
+PLOT_FONT_SIZE = 14
+PLOT_TICK_SIZE = 12
 
 def compute_iou(box1, box2):
     """
@@ -135,9 +139,18 @@ def evaluate_otb():
     auc = np.mean(mean_success_curve)
     prec_20 = mean_precision_curve[20]  # thresholds_cle[20] 就是 20px
 
+    plt.rcParams.update({
+        'font.size': PLOT_FONT_SIZE,
+        'axes.titlesize': PLOT_FONT_SIZE + 2,
+        'axes.labelsize': PLOT_FONT_SIZE,
+        'xtick.labelsize': PLOT_TICK_SIZE,
+        'ytick.labelsize': PLOT_TICK_SIZE,
+        'legend.fontsize': PLOT_TICK_SIZE,
+    })
+
     # 绘制成功率曲线 (Success Plot)
-    plt.figure()
-    plt.plot(thresholds_iou, mean_success_curve, label=f'KCF [AUC: {auc:.3f}]', color='red', linewidth=2)
+    plt.figure(figsize=PLOT_FIGSIZE)
+    plt.plot(thresholds_iou, mean_success_curve, label=f'KCF [AUC: {auc:.3f}]', color='red', linewidth=2.5)
     plt.title('Success Plot of OPE')
     plt.xlabel('Overlap threshold')
     plt.ylabel('Success rate')
@@ -145,12 +158,13 @@ def evaluate_otb():
     plt.legend(loc='lower left')
     plt.xlim(0, 1)
     plt.ylim(0, 1)
-    plt.savefig(PROJECT_ROOT / 'success_plot.png')
+    plt.tight_layout()
+    plt.savefig(PROJECT_ROOT / 'success_plot.png', dpi=PLOT_DPI, bbox_inches='tight')
     plt.close()
 
     # 绘制精确度曲线 (Precision Plot)
-    plt.figure()
-    plt.plot(thresholds_cle, mean_precision_curve, label=f'KCF [DP@20: {prec_20:.3f}]', color='blue', linewidth=2)
+    plt.figure(figsize=PLOT_FIGSIZE)
+    plt.plot(thresholds_cle, mean_precision_curve, label=f'KCF [DP@20: {prec_20:.3f}]', color='blue', linewidth=2.5)
     plt.title('Precision Plot of OPE')
     plt.xlabel('Location error threshold')
     plt.ylabel('Precision')
@@ -158,7 +172,8 @@ def evaluate_otb():
     plt.legend(loc='lower right')
     plt.xlim(0, 50)
     plt.ylim(0, 1)
-    plt.savefig(PROJECT_ROOT / 'precision_plot.png')
+    plt.tight_layout()
+    plt.savefig(PROJECT_ROOT / 'precision_plot.png', dpi=PLOT_DPI, bbox_inches='tight')
     plt.close()
 
     print(f"Evaluation complete.")
