@@ -1,6 +1,7 @@
 """
 评估 VOT2018 测试结果
 计算 EAO (Expected Average Overlap)、准确率 (Accuracy) 和鲁棒性 (Robustness)
+参数对齐 VOT2018 supervised 官方设置：burnin=10, skip_initialize=5, EAO=[100, 356]
 """
 import sys
 import io
@@ -16,8 +17,11 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-EAO_WINDOW_LOW = 1
-EAO_WINDOW_HIGH = 100
+# VOT2018 short-term 官方评估参数
+BURNIN_FRAMES = 10
+SKIP_INITIALIZE_FRAMES = 5
+EAO_WINDOW_LOW = 100
+EAO_WINDOW_HIGH = 356
 
 def load_groundtruth(gt_file):
     """加载真实标注文件"""
@@ -124,6 +128,87 @@ def compute_sequence_eao(segments, low=EAO_WINDOW_LOW, high=EAO_WINDOW_HIGH):
     window = window[np.isfinite(window)]
     return float(np.mean(window)) if len(window) > 0 else 0.0
 
+def find_bin_run_files(results_dir, seq_name):
+    """查找某序列所有 baseline 重复运行的 bin 结果文件。"""
+    results_dir = Path(results_dir)
+    run_files = []
+
+    for tracker_dir in results_dir.iterdir():
+        if not tracker_dir.is_dir():
+            continue
+
+        baseline_seq_dir = tracker_dir / 'baseline' / seq_name
+        if baseline_seq_dir.exists():
+            run_files = sorted(baseline_seq_dir.glob(f'{seq_name}_*.bin'))
+            if run_files:
+                return run_files
+
+    return run_files
+
+def evaluate_single_run(gt, run_data, use_special_frames):
+    """评估单次运行结果，支持 VOT bin 特殊帧语义和 burn-in 规则。"""
+    min_len = min(len(gt), len(run_data))
+    gt = gt[:min_len]
+
+    overlaps = []
+    frame_overlaps = []
+    failures = 0
+    tracked_frames = 0
+    burnin_left = BURNIN_FRAMES
+
+    if use_special_frames:
+        for i in range(min_len):
+            frame_info = run_data[i]
+            code = frame_info.get('code')
+
+            # 初始化帧后启用 burn-in（与 VOT2018 分析参数保持一致）
+            if code == 1:
+                burnin_left = BURNIN_FRAMES
+
+            if frame_info.get('failure', False):
+                failures += 1
+
+            if frame_info.get('valid', False):
+                iou = compute_overlap(frame_info['bbox'], gt[i])
+                if burnin_left > 0:
+                    burnin_left -= 1
+                    frame_overlaps.append(np.nan)
+                else:
+                    overlaps.append(iou)
+                    frame_overlaps.append(iou)
+                    tracked_frames += 1
+            else:
+                frame_overlaps.append(np.nan)
+    else:
+        # 对普通 txt 结果做近似处理：序列起始 burn-in，失效定义为 IoU<=0
+        for i in range(min_len):
+            iou = compute_overlap(run_data[i], gt[i])
+
+            if burnin_left > 0:
+                burnin_left -= 1
+                frame_overlaps.append(np.nan)
+            else:
+                overlaps.append(iou)
+                frame_overlaps.append(iou)
+                tracked_frames += 1
+
+            if iou <= 0:
+                failures += 1
+
+    overlaps = np.array(overlaps, dtype=np.float32)
+    segments = build_overlap_segments(np.array(frame_overlaps, dtype=np.float32))
+
+    return {
+        'accuracy': float(np.mean(overlaps)) if len(overlaps) > 0 else 0.0,
+        # VOT AR 的 R 倾向以失败次数表征，数值越低越好
+        'robustness': float(failures),
+        'failures': int(failures),
+        'tracked_frames': int(tracked_frames),
+        'length': int(min_len),
+        'overlaps': overlaps,
+        'segments': segments
+    }
+
 def load_results_bin(res_file):
     """加载 VOT Toolkit 格式的 bin 文件"""
     import sys
@@ -194,75 +279,75 @@ def evaluate_sequence(seq_name, results_dir, sequences_dir):
     if gt is None:
         return None
 
-    # 加载跟踪结果 (优先读取 txt; 如果没有，尝试寻找 bin)
+    # 优先使用 baseline 重复运行的 bin 结果（VOT2018 官方设置）
+    run_bin_files = find_bin_run_files(results_dir, seq_name)
+
+    if run_bin_files:
+        run_metrics = []
+        all_segments = []
+        all_overlaps = []
+        total_failures = 0
+        total_tracked_frames = 0
+
+        for bin_file in run_bin_files:
+            res = load_results_bin(str(bin_file))
+            if res is None:
+                continue
+
+            run_result = evaluate_single_run(gt, res, use_special_frames=True)
+            run_metrics.append(run_result)
+            all_segments.extend(run_result['segments'])
+            all_overlaps.append(run_result['overlaps'])
+            total_failures += run_result['failures']
+            total_tracked_frames += run_result['tracked_frames']
+
+        if not run_metrics:
+            print(f"警告: {seq_name} 的重复运行结果读取失败")
+            return None
+
+        accuracy = float(np.mean([r['accuracy'] for r in run_metrics]))
+        robustness = float(np.mean([r['robustness'] for r in run_metrics]))
+        eao = compute_sequence_eao(all_segments)
+        min_len = int(np.min([r['length'] for r in run_metrics]))
+        overlaps = np.concatenate(all_overlaps) if all_overlaps else np.array([], dtype=np.float32)
+
+        return {
+            'sequence': seq_name,
+            'accuracy': accuracy,
+            'robustness': robustness,
+            'eao': eao,
+            'failures': total_failures,
+            'tracked_frames': total_tracked_frames,
+            'length': min_len,
+            'runs': len(run_metrics),
+            'segments': all_segments,
+            'overlaps': overlaps
+        }
+
+    # 回退：兼容单次 txt 输出
     res_file_txt = os.path.join(results_dir, f'{seq_name}.txt')
-    res_file_bin = os.path.join(results_dir, 'KCF_Tracker', 'baseline', seq_name, f'{seq_name}_001.bin')
-    
-    use_bin_results = False
-    if os.path.exists(res_file_txt):
-        res = load_results(res_file_txt)
-    elif os.path.exists(res_file_bin):
-        res = load_results_bin(res_file_bin)
-        use_bin_results = True
-    else:
-        print(f"警告: 找不到 {res_file_txt} 以及 {res_file_bin}")
+    if not os.path.exists(res_file_txt):
+        print(f"警告: 找不到 {seq_name} 的 bin 重复结果与 txt 结果")
         return None
 
+    res = load_results(res_file_txt)
     if res is None:
         return None
 
-    # 确保长度一致
-    min_len = min(len(gt), len(res))
-    gt = gt[:min_len]
-    res = res[:min_len]
-    
-    overlaps = []
-    frame_overlaps = []
-    failures = 0
-    tracked_frames = 0
+    run_result = evaluate_single_run(gt, res, use_special_frames=False)
+    eao = compute_sequence_eao(run_result['segments'])
 
-    if use_bin_results:
-        # VOT bin 结果中包含 Special 帧：
-        # code=1 初始化, code=2 失效事件, code=0 跳过/未知
-        # 准确率仅在有效预测框帧上统计；失效次数仅统计 code=2。
-        for i in range(min_len):
-            frame_info = res[i]
-            if frame_info.get('valid', False):
-                iou = compute_overlap(frame_info['bbox'], gt[i])
-                overlaps.append(iou)
-                frame_overlaps.append(iou)
-                tracked_frames += 1
-            else:
-                frame_overlaps.append(np.nan)
-
-            if frame_info.get('failure', False):
-                failures += 1
-    else:
-        # 兼容普通 txt 结果：维持原始按帧 IoU 统计方式
-        for i in range(min_len):
-            iou = compute_overlap(res[i], gt[i])
-            overlaps.append(iou)
-            frame_overlaps.append(iou)
-        tracked_frames = len(overlaps)
-        failures = int(np.sum(np.array(overlaps) == 0))
-
-    overlaps = np.array(overlaps, dtype=np.float32)
-
-    # 计算准确率
-    accuracy = np.mean(overlaps) if len(overlaps) > 0 else 0.0
-    robustness = failures / min_len if min_len > 0 else 0.0
-    overlap_segments = build_overlap_segments(np.array(frame_overlaps, dtype=np.float32))
-    eao = compute_sequence_eao(overlap_segments)
-    
     return {
         'sequence': seq_name,
-        'accuracy': accuracy,
-        'robustness': robustness,
+        'accuracy': run_result['accuracy'],
+        'robustness': run_result['robustness'],
         'eao': eao,
-        'failures': failures,
-        'tracked_frames': tracked_frames,
-        'length': min_len,
-        'overlaps': overlaps
+        'failures': run_result['failures'],
+        'tracked_frames': run_result['tracked_frames'],
+        'length': run_result['length'],
+        'runs': 1,
+        'segments': run_result['segments'],
+        'overlaps': run_result['overlaps']
     }
 
 def evaluate_all(workspace_dir=None):
@@ -289,7 +374,7 @@ def evaluate_all(workspace_dir=None):
     print("=" * 70)
     print("VOT2018 评估结果")
     print("=" * 70)
-    print(f"{'序列名称':<20} {'A(Accuracy)':<12} {'R(Robust)':<12} {'EAO':<10} {'失效次数':<10} {'总帧数':<10}")
+    print(f"{'序列名称':<20} {'A(Accuracy)':<12} {'R(Failures)':<12} {'EAO':<10} {'Runs':<8} {'总帧数':<10}")
     print("-" * 70)
     
     all_results = []
@@ -299,6 +384,7 @@ def evaluate_all(workspace_dir=None):
     total_failures = 0
     total_tracked_frames = 0
     total_frames = 0
+    global_eao_segments = []
     
     for seq_name in sorted(sequences):
         result = evaluate_sequence(seq_name, results_dir, sequences_dir)
@@ -309,12 +395,13 @@ def evaluate_all(workspace_dir=None):
             total_eao += result['eao']
             total_failures += result['failures']
             total_tracked_frames += result.get('tracked_frames', result['length'])
-            total_frames += result['length']
+            total_frames += result['length'] * result.get('runs', 1)
+            global_eao_segments.extend(result.get('segments', []))
             
             print(
                 f"{seq_name:<20} {result['accuracy']:<12.4f} "
                 f"{result['robustness']:<12.4f} {result['eao']:<10.4f} "
-                f"{result['failures']:<10} {result['length']:<10}"
+                f"{result.get('runs', 1):<8} {result['length']:<10}"
             )
     
     print("-" * 70)
@@ -325,18 +412,22 @@ def evaluate_all(workspace_dir=None):
         avg_accuracy = total_accuracy / num_sequences
         avg_robustness = total_robustness / num_sequences
         avg_eao = total_eao / num_sequences
+        dataset_eao = compute_sequence_eao(global_eao_segments)
         failure_rate = total_failures / total_frames if total_frames > 0 else 0.0
         
         print(f"\n总体统计:")
         print(f"  平均准确率 A (Accuracy):       {avg_accuracy:.4f}")
-        print(f"  平均鲁棒性 R (Failures/Frame): {avg_robustness:.4f}")
-        print(f"  平均 EAO:                      {avg_eao:.4f}")
+        print(f"  平均鲁棒性 R (Failures):       {avg_robustness:.4f}")
+        print(f"  平均序列 EAO:                  {avg_eao:.4f}")
+        print(f"  数据集 EAO (官方口径近似):     {dataset_eao:.4f}")
         print(f"  总失效次数:              {total_failures}")
         print(f"  失效率 (Failure Rate):   {failure_rate:.4f}")
         print(f"  评估序列数:              {num_sequences}")
         print(f"  有效预测帧数:            {total_tracked_frames}")
-        print(f"  总帧数:                  {total_frames}")
+        print(f"  总帧数(含重复运行):      {total_frames}")
         print(f"  EAO 时间窗:              [{EAO_WINDOW_LOW}, {EAO_WINDOW_HIGH}]")
+        print(f"  Burn-in 帧数:            {BURNIN_FRAMES}")
+        print(f"  Re-init 跳帧(实验参数):  {SKIP_INITIALIZE_FRAMES}")
         
         # 为 A/R/EAO 生成序列级可视化
         plot_metrics_per_sequence(all_results)
@@ -408,7 +499,7 @@ def plot_metrics_per_sequence(results):
         results=results,
         metric_key='robustness',
         title='Tracking Robustness per Sequence (R)',
-        ylabel='R (Failures / Frame)',
+        ylabel='R (Failures)',
         output_filename='vot2018_robustness_per_sequence.png',
         color='darkorange'
     )
@@ -431,14 +522,14 @@ def save_results(results, workspace_dir):
         
         f.write(
             f"{'Sequence':<20} {'Accuracy(A)':<12} {'Robustness(R)':<14} "
-            f"{'EAO':<10} {'Failures':<10} {'Tracked':<10} {'Frames':<10}\n"
+            f"{'EAO':<10} {'Runs':<8} {'Failures':<10} {'Tracked':<10} {'Frames':<10}\n"
         )
         f.write("-" * 70 + "\n")
         
         for r in results:
             f.write(
                 f"{r['sequence']:<20} {r['accuracy']:<12.4f} {r['robustness']:<14.4f} "
-                f"{r['eao']:<10.4f} {r['failures']:<10} "
+                f"{r['eao']:<10.4f} {r.get('runs', 1):<8} {r['failures']:<10} "
                 f"{r.get('tracked_frames', r['length']):<10} {r['length']:<10}\n"
             )
         
@@ -449,16 +540,22 @@ def save_results(results, workspace_dir):
         total_eao = sum(r['eao'] for r in results)
         total_failures = sum(r['failures'] for r in results)
         total_tracked = sum(r.get('tracked_frames', r['length']) for r in results)
-        total_frames = sum(r['length'] for r in results)
+        total_frames = sum(r['length'] * r.get('runs', 1) for r in results)
+        all_segments = []
+        for r in results:
+            all_segments.extend(r.get('segments', []))
         num_sequences = len(results)
         
         f.write(f"\nOverall Statistics:\n")
         f.write(f"  Average Accuracy (A):     {total_accuracy / num_sequences:.4f}\n")
         f.write(f"  Average Robustness (R):   {total_robustness / num_sequences:.4f}\n")
-        f.write(f"  Average EAO:              {total_eao / num_sequences:.4f}\n")
+        f.write(f"  Average Sequence EAO:     {total_eao / num_sequences:.4f}\n")
+        f.write(f"  Dataset EAO:              {compute_sequence_eao(all_segments):.4f}\n")
         f.write(f"  Total Failures:           {total_failures}\n")
         f.write(f"  Failure Rate:             {total_failures / total_frames:.4f}\n")
         f.write(f"  EAO Window:               [{EAO_WINDOW_LOW}, {EAO_WINDOW_HIGH}]\n")
+        f.write(f"  Burn-in:                  {BURNIN_FRAMES}\n")
+        f.write(f"  Skip Initialize:          {SKIP_INITIALIZE_FRAMES}\n")
         f.write(f"  Num Sequences:            {num_sequences}\n")
         f.write(f"  Tracked Frames:           {total_tracked}\n")
         f.write(f"  Total Frames:             {total_frames}\n")
