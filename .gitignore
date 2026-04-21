@@ -31,7 +31,8 @@ CarScale.avi
 results/
 precision_plot.png
 success_plot.png
-vot2018_accuracy.png
+vot2018_accuracy_distribution.png
+vot2018_accuracy_per_sequence.png
 vot2018_workspace/analysis/
 vot2018_workspace/cache/
 vot2018_workspace/logs/

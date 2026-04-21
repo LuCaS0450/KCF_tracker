@@ -276,36 +276,59 @@ def plot_accuracy_distribution(results):
     """绘制准确率分布图"""
     accuracies = [r['accuracy'] for r in results]
     seq_names = [r['sequence'] for r in results]
-    
-    plt.figure(figsize=(14, 6))
-    
-    # 柱状图
-    plt.subplot(1, 2, 1)
-    x = range(len(accuracies))
-    plt.bar(x, accuracies, color='steelblue', alpha=0.7)
-    plt.xlabel('Sequence Index', fontsize=12)
-    plt.ylabel('Accuracy (Average IoU)', fontsize=12)
-    plt.title('Tracking Accuracy per Sequence', fontsize=14)
-    plt.xticks(x, [name[:10] for name in seq_names], rotation=45, ha='right')
-    plt.tight_layout()
-    plt.grid(axis='y', alpha=0.3)
-    
-    # 直方图
-    plt.subplot(1, 2, 2)
-    plt.hist(accuracies, bins=15, color='coral', alpha=0.7, edgecolor='black')
-    plt.xlabel('Accuracy (Average IoU)', fontsize=12)
-    plt.ylabel('Number of Sequences', fontsize=12)
-    plt.title('Accuracy Distribution', fontsize=14)
-    plt.axvline(np.mean(accuracies), color='red', linestyle='--', 
-                label=f'Mean: {np.mean(accuracies):.3f}')
-    plt.legend()
-    plt.grid(axis='y', alpha=0.3)
-    
-    plt.tight_layout()
-    output_plot = PROJECT_ROOT / 'vot2018_accuracy.png'
-    plt.savefig(output_plot, dpi=300, bbox_inches='tight')
-    print(f"  准确率分布图已保存: {output_plot}")
-    plt.close()
+
+    # 左图：分面子图（每个子图20个序列，适配科研展示）
+    chunk_size = 20
+    num_panels = int(np.ceil(len(accuracies) / chunk_size))
+    fig_seq, axes = plt.subplots(num_panels, 1, figsize=(12, 3.4 * num_panels), sharey=True)
+    if num_panels == 1:
+        axes = [axes]
+
+    for panel_idx, ax in enumerate(axes):
+        start = panel_idx * chunk_size
+        end = min((panel_idx + 1) * chunk_size, len(accuracies))
+
+        if start >= len(accuracies):
+            ax.axis('off')
+            continue
+
+        x = np.arange(start, end)
+        panel_acc = accuracies[start:end]
+        panel_names = [name[:12] for name in seq_names[start:end]]
+
+        ax.bar(x, panel_acc, color='steelblue', alpha=0.7)
+        ax.set_xticks(x)
+        ax.set_xticklabels(panel_names, rotation=45, ha='right', fontsize=8)
+        ax.set_ylim(0, 1.0)
+        ax.set_ylabel('Avg IoU', fontsize=10)
+        ax.set_title(f'Sequences {start + 1}-{end}', fontsize=11)
+        ax.grid(axis='y', alpha=0.3)
+
+    axes[-1].set_xlabel('Sequence', fontsize=11)
+    fig_seq.suptitle('Tracking Accuracy per Sequence (Faceted)', fontsize=14)
+    fig_seq.tight_layout(rect=[0, 0.02, 1, 0.96])
+
+    output_seq_plot = PROJECT_ROOT / 'vot2018_accuracy_per_sequence.png'
+    fig_seq.savefig(output_seq_plot, dpi=300, bbox_inches='tight')
+    print(f"  序列准确率分面图已保存: {output_seq_plot}")
+    plt.close(fig_seq)
+
+    # 右图：准确率分布直方图
+    fig_hist, ax_hist = plt.subplots(figsize=(10, 6))
+    ax_hist.hist(accuracies, bins=15, color='coral', alpha=0.7, edgecolor='black')
+    ax_hist.set_xlabel('Accuracy (Average IoU)', fontsize=12)
+    ax_hist.set_ylabel('Number of Sequences', fontsize=12)
+    ax_hist.set_title('Accuracy Distribution', fontsize=14)
+    ax_hist.axvline(np.mean(accuracies), color='red', linestyle='--',
+                    label=f'Mean: {np.mean(accuracies):.3f}')
+    ax_hist.legend()
+    ax_hist.grid(axis='y', alpha=0.3)
+    fig_hist.tight_layout()
+
+    output_hist_plot = PROJECT_ROOT / 'vot2018_accuracy_distribution.png'
+    fig_hist.savefig(output_hist_plot, dpi=300, bbox_inches='tight')
+    print(f"  准确率分布直方图已保存: {output_hist_plot}")
+    plt.close(fig_hist)
 
 def save_results(results, workspace_dir):
     """保存评估结果到文件"""
