@@ -11,7 +11,7 @@ class TestOtbEvaluate(unittest.TestCase):
 
         curve = compute_success_curve(ious, thresholds)
 
-        # th=0.0 -> 3/3 IoUs satisfy >= 0.0; th=0.5 -> only 0.8 satisfies >= 0.5 (1/3)
+        # th=0.0 -> 3/3 IoUs satisfy >= 0.0; th=0.5 -> only IoU=0.8 satisfies >= 0.5 (1/3)
         np.testing.assert_allclose(curve, np.array([1.0, 1.0 / 3.0]))
 
 
