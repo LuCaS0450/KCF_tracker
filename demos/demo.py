@@ -7,6 +7,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.kcf import KCFTracker
+from core import fhog
 
 def main():
     # To use our custom HOG KCF python tracker
@@ -27,6 +28,18 @@ def main():
     if not ok:
         print('Cannot read video file')
         sys.exit()
+
+    # Warm up Numba-compiled FHOG kernels before ROI confirmation.
+    # This avoids the several-second pause right after pressing Enter.
+    warmup_patch = frame[:128, :128]
+    if warmup_patch.size == 0:
+        warmup_patch = frame
+
+    print("Warming up FHOG/Numba kernels (first run may take a few seconds)...")
+    t0 = cv2.getTickCount()
+    _ = fhog.fhog(warmup_patch, cell_size=tracker.cell_size)
+    warmup_ms = (cv2.getTickCount() - t0) * 1000.0 / cv2.getTickFrequency()
+    print(f"Warm-up done in {warmup_ms:.1f} ms")
 
 
 

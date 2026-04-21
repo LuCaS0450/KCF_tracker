@@ -122,3 +122,5 @@ pip install vot-toolkit
 ### 6.2 VOT 运行中断但返回码异常
 
 `vot2018/run_vot2018.py` 已增加结果文件二次校验。若未生成 `.bin`，脚本会直接判定失败并提示查看日志。
+
+
