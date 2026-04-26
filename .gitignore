@@ -44,3 +44,7 @@ vot2018_workspace/evaluation_results.txt
 vot2018_workspace/trackers.ini
 vot2018_eao_per_sequence.png
 vot2018_robustness_per_sequence.png
+experiment_report1.md
+experiment2.md
+.gitignore
+experiment3.md
